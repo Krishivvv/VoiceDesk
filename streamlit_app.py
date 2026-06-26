@@ -8,6 +8,7 @@ Run with: streamlit run streamlit_app.py
 import base64
 import binascii
 import io
+import os
 import wave
 from datetime import datetime
 from typing import Any
@@ -24,7 +25,7 @@ except ImportError:
     AUDIO_RECORDING_AVAILABLE = False
 
 # Configuration
-DEFAULT_SERVER_URL = "http://localhost:8000"
+DEFAULT_SERVER_URL = os.getenv("DEFAULT_SERVER_URL", "http://localhost:8000")
 AUDIO_SAMPLE_RATE = 16000
 AUDIO_CHANNELS = 1
 

@@ -1,0 +1,19 @@
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.git/
+.github/
+tests/
+.env
+*.log
+*.md
+!README.md
+__MACOSX/
+# chroma_db is rebuilt during the image build; never copy a local copy in.
+data/chroma_db/
