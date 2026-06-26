@@ -1,206 +1,154 @@
-"""
-Base Speech-to-Text (STT) Interface
+"""Speech-to-Text layer for the audio support pipeline.
 
-This module defines the abstract base class for Speech-to-Text implementations.
-Students should implement the concrete STT class by inheriting from this base class.
-
-Recommended implementation: Deepgram API (free tier available)
-Alternative options: OpenAI Whisper, AssemblyAI, or any other STT service
+Defines the :class:`BaseSTT` interface and :class:`STTService`, a local
+OpenAI Whisper implementation. The Whisper model is loaded once per model
+name and cached process-wide (see :func:`_load_whisper_model`) so repeated
+pipeline initialisations never re-download or re-load weights.
 """
 
+from __future__ import annotations
+
+import asyncio
+import io
+import os
+import tempfile
+import threading
 from abc import ABC, abstractmethod
-from typing import Optional, Dict, Any
+from typing import Any, Dict, Optional
+
+import numpy as np
+
+from src.utils.logging_config import get_logger
+
+logger = get_logger(__name__)
+
+# Whisper expects 16 kHz mono float32 audio.
+_TARGET_SAMPLE_RATE = 16000
+
+# Process-wide model cache so the (potentially large) Whisper weights load
+# exactly once per model name, even across multiple STTService instances.
+_MODEL_CACHE: Dict[str, Any] = {}
+_MODEL_LOCK = threading.Lock()
+
+
+def _load_whisper_model(model_name: str) -> Any:
+    """Load (or return a cached) Whisper model for ``model_name``.
+
+    Thread-safe and idempotent: the first call loads the weights, every
+    subsequent call with the same name returns the cached model.
+    """
+    cached = _MODEL_CACHE.get(model_name)
+    if cached is not None:
+        return cached
+
+    with _MODEL_LOCK:
+        cached = _MODEL_CACHE.get(model_name)
+        if cached is not None:
+            return cached
+
+        import whisper
+
+        # Make a bundled ffmpeg binary discoverable if one is installed.
+        try:
+            import imageio_ffmpeg
+
+            ffmpeg_dir = os.path.dirname(imageio_ffmpeg.get_ffmpeg_exe())
+            os.environ["PATH"] += os.pathsep + ffmpeg_dir
+        except ImportError:
+            pass
+
+        logger.info("Loading Whisper model '%s' (first run may download weights)...", model_name)
+        model = whisper.load_model(model_name)
+        _MODEL_CACHE[model_name] = model
+        logger.info("Whisper model '%s' loaded and cached", model_name)
+        return model
 
 
 class BaseSTT(ABC):
-    """
-    Abstract base class for Speech-to-Text implementations.
-    
-    This class defines the interface that all STT implementations must follow.
-    Students should inherit from this class and implement the abstract methods.
-    """
-    
-    def __init__(self, config: Optional[Dict[str, Any]] = None):
-        """
-        Initialize the STT service.
-        
+    """Abstract interface every Speech-to-Text implementation must satisfy."""
+
+    def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
+        """Store configuration and mark the service uninitialised.
+
         Args:
-            config: Configuration dictionary containing API keys, model settings, etc.
-                   Example: {"api_key": "your_api_key", "model": "nova-2"}
+            config: Implementation settings, e.g. ``{"model": "base"}``.
         """
-        self.config = config or {}
-        self.is_initialized = False
-    
+        self.config: Dict[str, Any] = config or {}
+        self.is_initialized: bool = False
+
     @abstractmethod
     async def initialize(self) -> None:
-        """
-        Initialize the STT service (setup API clients, load models, etc.).
-        This method should be called before using the STT service.
-        
-        Raises:
-            Exception: If initialization fails
-        """
-        pass
-    
+        """Set up the service (load models / open clients) before first use."""
+
     @abstractmethod
-    async def transcribe(self, audio_bytes: bytes, **kwargs) -> str:
-        """
-        Transcribe audio bytes to text.
-        
-        Args:
-            audio_bytes: Raw audio data as bytes
-            **kwargs: Additional parameters specific to the STT implementation
-                     (e.g., language, model, formatting options)
-        
-        Returns:
-            str: The transcribed text
-            
-        Raises:
-            Exception: If transcription fails
-        """
-        pass
-    
+    async def transcribe(self, audio_bytes: bytes, **kwargs: Any) -> str:
+        """Transcribe raw audio bytes to text."""
+
     @abstractmethod
     async def cleanup(self) -> None:
-        """
-        Cleanup resources (close connections, free memory, etc.).
-        This method should be called when the STT service is no longer needed.
-        """
-        pass
-    
+        """Release resources held by the service."""
+
     def is_ready(self) -> bool:
-        """
-        Check if the STT service is ready to use.
-        
-        Returns:
-            bool: True if ready, False otherwise
-        """
+        """Return ``True`` once :meth:`initialize` has completed successfully."""
         return self.is_initialized
 
 
 class STTService(BaseSTT):
+    """Local OpenAI Whisper transcription service.
+
+    Decodes incoming audio in-memory with ``soundfile`` and resamples to
+    16 kHz mono before inference; if decoding fails it falls back to writing
+    a temporary file and letting Whisper/ffmpeg handle the format. Inference
+    runs in a worker thread so it never blocks the event loop.
     """
-    Generic STT implementation template.
-    
-    Students should complete this implementation using their chosen STT service or pretrained model.
-    
-    API-based options:
-    - Deepgram API (free tier, high accuracy): pip install deepgram-sdk
-    - AssemblyAI (API-based): pip install assemblyai
-    - Azure Speech Services: pip install azure-cognitiveservices-speech
-    - Google Cloud Speech: pip install google-cloud-speech
-    
-    Pretrained model options (local inference):
-    - OpenAI Whisper: pip install openai-whisper (various sizes: tiny, base, small, medium, large)
-    - Wav2Vec2 models: pip install transformers torch (Facebook's pretrained models)
-    - SpeechRecognition + offline engines: pip install SpeechRecognition pocketsphinx
-    - Vosk models: pip install vosk (lightweight, supports many languages)
-    - Coqui STT: pip install coqui-stt (open-source, pretrained models available)
-    
-    Input: audio_bytes (bytes) - Raw audio data
-    Output: transcribed_text (str) - The text transcription
-    """
-    
-    def __init__(self, config: Optional[Dict[str, Any]] = None):
+
+    def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
         super().__init__(config)
-        self.client = None
-        # TODO: Initialize your chosen STT client/model
-        # API-based examples:
-        # - For Deepgram: from deepgram import DeepgramClient
-        # - For AssemblyAI: import assemblyai
-        # Pretrained model examples:
-        # - For Whisper: import whisper
-        # - For Transformers: from transformers import Wav2Vec2ForCTC, Wav2Vec2Processor
-        # - For Vosk: import vosk
-    
+        self.client: Any = None
+        self.model_name: str = self.config.get("model", "base")
+
     async def initialize(self) -> None:
-        """
-        TODO: Implement STT service initialization.
-        
-        Steps:
-        1. Get API key from config (if using API service)
-        2. Create client instance or load model
-        3. Set is_initialized to True
-        4. Optionally test the connection
-        
-        Example for API-based services:
-        ```python
-        api_key = self.config.get("api_key")
-        if not api_key:
-            raise ValueError("API key not provided")
-        self.client = YourSTTClient(api_key)
-        ```
-        
-        Example for pretrained models (local):
-        ```python
-        # Whisper
-        model_name = self.config.get("model", "base")
-        self.client = whisper.load_model(model_name)
-        
-        # Wav2Vec2 with Transformers
-        model_name = "facebook/wav2vec2-base-960h"
-        self.processor = Wav2Vec2Processor.from_pretrained(model_name)
-        self.client = Wav2Vec2ForCTC.from_pretrained(model_name)
-        
-        # Vosk
-        model_path = self.config.get("model_path", "path/to/vosk-model")
-        self.client = vosk.Model(model_path)
-        ```
+        """Load the Whisper model (cached) and mark the service ready.
+
+        Raises:
+            ImportError: If ``openai-whisper`` is not installed.
+            RuntimeError: If model loading fails for any other reason.
         """
         try:
-            import whisper
-            import os
-            try:
-                import imageio_ffmpeg
-                ffmpeg_path = os.path.dirname(imageio_ffmpeg.get_ffmpeg_exe())
-                os.environ["PATH"] += os.pathsep + ffmpeg_path
-            except ImportError:
-                pass
-
-            model_name = self.config.get("model", "base")
-            print(f"Loading Whisper model: '{model_name}' (first run may download the model)...")
-            self.client = whisper.load_model(model_name)
+            self.client = await asyncio.to_thread(_load_whisper_model, self.model_name)
             self.is_initialized = True
-            print(f"Whisper STT initialized successfully with model: {model_name}")
-        except ImportError:
-            raise ImportError(
-                "openai-whisper is not installed. Run: pip install openai-whisper"
-            )
-        except Exception as e:
+            logger.info("Whisper STT initialised (model=%s)", self.model_name)
+        except ImportError as exc:
+            raise ImportError("openai-whisper is not installed. Run: pip install openai-whisper") from exc
+        except Exception as exc:
             self.is_initialized = False
-            raise RuntimeError(f"STT initialization failed: {str(e)}")
-    
-    async def transcribe(self, audio_bytes: bytes, **kwargs) -> str:
-        """
-        Transcribe audio bytes to text using OpenAI Whisper.
+            raise RuntimeError(f"STT initialization failed: {exc}") from exc
 
-        Input: audio_bytes (bytes) - Raw audio data in any supported format
-        Output: str - Transcribed text
+    async def transcribe(self, audio_bytes: bytes, **kwargs: Any) -> str:
+        """Transcribe ``audio_bytes`` to text.
 
-        Uses asyncio.to_thread to avoid blocking the event loop during
-        CPU-intensive Whisper inference.
+        Args:
+            audio_bytes: Raw audio in any ffmpeg/soundfile-decodable format.
+
+        Returns:
+            The transcribed text, or an empty string if no speech is detected.
+
+        Raises:
+            RuntimeError: If the service is not initialised or inference fails.
+            ValueError: If the audio is empty or implausibly short.
         """
         if not self.is_ready():
             raise RuntimeError("STT service not initialized. Call initialize() first.")
-
         if not audio_bytes:
             raise ValueError("audio_bytes cannot be empty")
-
         if len(audio_bytes) < 100:
             raise ValueError("Audio data is too short to contain speech")
 
-        import asyncio
-
         return await asyncio.to_thread(self._transcribe_sync, audio_bytes, **kwargs)
 
-    def _transcribe_sync(self, audio_bytes: bytes, **kwargs) -> str:
-        """Synchronous transcription helper — runs in a thread pool."""
-        import io
-        import os
-        import tempfile
-        import numpy as np
-
-        # ------- Strategy 1: decode in-memory with soundfile -------
+    def _transcribe_sync(self, audio_bytes: bytes, **kwargs: Any) -> str:
+        """Blocking transcription helper executed in a worker thread."""
+        # Strategy 1: decode entirely in memory with soundfile.
         try:
             import soundfile as sf
 
@@ -208,14 +156,11 @@ class STTService(BaseSTT):
             if audio_data.size == 0 or sample_rate <= 0:
                 raise ValueError("Invalid audio data")
 
-            # Convert stereo to mono
-            if audio_data.ndim > 1:
+            if audio_data.ndim > 1:  # stereo -> mono
                 audio_data = audio_data.mean(axis=1)
 
-            # Resample to 16 kHz (Whisper requirement)
-            target_sample_rate = 16000
-            if sample_rate != target_sample_rate:
-                new_length = int(audio_data.shape[0] * target_sample_rate / sample_rate)
+            if sample_rate != _TARGET_SAMPLE_RATE:
+                new_length = int(audio_data.shape[0] * _TARGET_SAMPLE_RATE / sample_rate)
                 if new_length <= 0:
                     raise ValueError("Invalid audio length after resampling")
                 audio_data = np.interp(
@@ -224,69 +169,55 @@ class STTService(BaseSTT):
                     audio_data,
                 ).astype("float32")
 
-            result = self.client.transcribe(audio_data, fp16=False)
-            transcription = result.get("text", "").strip()
-
-            if transcription:
-                print(f"Transcription: '{transcription}'")
-            else:
-                print("Whisper returned empty transcription (no speech detected)")
-
+            transcription = self.client.transcribe(audio_data, fp16=False).get("text", "").strip()
+            self._log_transcription(transcription)
             return transcription
 
         except Exception as decode_error:
-            _initial_decode_error = str(decode_error)
-            print(f"In-memory decode failed ({_initial_decode_error}), falling back to temp file...")
+            initial_decode_error = str(decode_error)
+            logger.warning("In-memory decode failed (%s); falling back to temp file", initial_decode_error)
 
-        # ------- Strategy 2: write to temp file, let Whisper/ffmpeg handle it -------
-        tmp_path = None
+        # Strategy 2: write to a temp file and let Whisper/ffmpeg decode it.
+        tmp_path: Optional[str] = None
         try:
-            with tempfile.NamedTemporaryFile(
-                suffix=".wav", delete=False, dir=os.getcwd()
-            ) as tmp_file:
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False, dir=os.getcwd()) as tmp_file:
                 tmp_file.write(audio_bytes)
                 tmp_file.flush()
                 tmp_path = tmp_file.name
 
-            result = self.client.transcribe(tmp_path, fp16=False)
-            transcription = result.get("text", "").strip()
-
-            if transcription:
-                print(f"Transcription: '{transcription}'")
-            else:
-                print("Whisper returned empty transcription (no speech detected)")
-
+            transcription = self.client.transcribe(tmp_path, fp16=False).get("text", "").strip()
+            self._log_transcription(transcription)
             return transcription
 
-        except FileNotFoundError as e:
+        except FileNotFoundError as exc:
             raise RuntimeError(
-                "Transcription failed: ffmpeg not found. "
-                "Install ffmpeg (https://ffmpeg.org/download.html) and make sure it is on your PATH, "
+                "Transcription failed: ffmpeg not found. Install ffmpeg and ensure it is on PATH, "
                 "or provide 16 kHz WAV audio."
-            ) from e
-        except Exception as e:
+            ) from exc
+        except Exception as exc:
             raise RuntimeError(
-                f"Transcription failed: {str(e)} (initial decode error: {_initial_decode_error})"
-            ) from e
+                f"Transcription failed: {exc} (initial decode error: {initial_decode_error})"
+            ) from exc
         finally:
             if tmp_path and os.path.exists(tmp_path):
                 try:
                     os.unlink(tmp_path)
                 except OSError:
                     pass
-    
+
+    @staticmethod
+    def _log_transcription(transcription: str) -> None:
+        if transcription:
+            logger.info("Transcription: '%s'", transcription)
+        else:
+            logger.info("Whisper returned empty transcription (no speech detected)")
+
     async def cleanup(self) -> None:
+        """Detach from the cached model and mark the service uninitialised.
+
+        The shared model stays in the process-wide cache for reuse; only this
+        instance's reference is cleared.
         """
-        TODO: Implement cleanup logic.
-        
-        Steps:
-        1. Close any open connections
-        2. Clear client instance
-        3. Set is_initialized to False
-        """
-        try:
-            self.client = None
-            self.is_initialized = False
-            print("STT cleanup completed")
-        except Exception as e:
-            print(f"STT cleanup error: {str(e)}")
+        self.client = None
+        self.is_initialized = False
+        logger.info("STT cleanup completed")
