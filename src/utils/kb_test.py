@@ -5,8 +5,8 @@ Run this script to inspect the ChromaDB collection and test RAG retrieval.
 """
 
 import asyncio
-import sys
 import os
+import sys
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
@@ -69,7 +69,7 @@ def show_collection_structure(agent: CustomerSupportAgent):
 
         if sample["documents"] and sample["documents"][0]:
             for i, (doc, meta, dist) in enumerate(
-                zip(sample["documents"][0], sample["metadatas"][0], sample["distances"][0])
+                zip(sample["documents"][0], sample["metadatas"][0], sample["distances"][0], strict=False)
             ):
                 print(f"\nDocument {i + 1}:")
                 print(f"  Title:    {meta['title']}")

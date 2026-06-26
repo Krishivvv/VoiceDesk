@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Tuple
+from typing import Any
 
 from src.llm.agent import BaseAgent, CustomerSupportAgent
 from src.stt.base_stt import BaseSTT, STTService
@@ -24,9 +24,9 @@ logger = get_logger(__name__)
 class PipelineConfig:
     """Configuration for the audio support pipeline."""
 
-    stt_config: Dict[str, Any]
-    llm_config: Dict[str, Any]
-    tts_config: Dict[str, Any]
+    stt_config: dict[str, Any]
+    llm_config: dict[str, Any]
+    tts_config: dict[str, Any]
 
 
 @dataclass
@@ -43,9 +43,9 @@ class AudioSupportPipeline:
     def __init__(self, config: PipelineConfig) -> None:
         """Create the pipeline with the given component configuration."""
         self.config = config
-        self.stt: Optional[BaseSTT] = None
-        self.llm_agent: Optional[BaseAgent] = None
-        self.tts: Optional[BaseTTS] = None
+        self.stt: BaseSTT | None = None
+        self.llm_agent: BaseAgent | None = None
+        self.tts: BaseTTS | None = None
         self.is_initialized = False
 
     async def initialize(self) -> None:
@@ -92,7 +92,7 @@ class AudioSupportPipeline:
 
     async def process_audio_with_transcript(
         self, audio_bytes: bytes, **kwargs: Any
-    ) -> Tuple[bytes, TranscriptData, int]:
+    ) -> tuple[bytes, TranscriptData, int]:
         """Run the full audio pipeline, returning audio, transcript and timing.
 
         Returns:
@@ -122,7 +122,7 @@ class AudioSupportPipeline:
 
         return response_audio, transcript_data, processing_time_ms
 
-    async def process_text(self, text_input: str, **kwargs: Any) -> Tuple[str, bytes]:
+    async def process_text(self, text_input: str, **kwargs: Any) -> tuple[str, bytes]:
         """Process a text query (no STT) and return ``(response_text, audio)``."""
         if not self.is_initialized:
             raise RuntimeError("Pipeline not initialized. Call initialize() first.")
@@ -131,7 +131,7 @@ class AudioSupportPipeline:
         response_audio = await self.tts.synthesize(agent_response, **kwargs)
         return agent_response, response_audio
 
-    async def process_text_with_timing(self, text_input: str, **kwargs: Any) -> Tuple[str, int]:
+    async def process_text_with_timing(self, text_input: str, **kwargs: Any) -> tuple[str, int]:
         """Process a text query and return ``(response_text, processing_time_ms)``."""
         if not self.is_initialized:
             raise RuntimeError("Pipeline not initialized. Call initialize() first.")
@@ -140,7 +140,7 @@ class AudioSupportPipeline:
         agent_response, _ = await self.process_text(text_input, **kwargs)
         return agent_response, int((time.perf_counter() - start_time) * 1000)
 
-    async def health_check(self) -> Dict[str, bool]:
+    async def health_check(self) -> dict[str, bool]:
         """Return the readiness state of the pipeline and each component."""
         return {
             "pipeline_initialized": self.is_initialized,
@@ -168,9 +168,9 @@ class AudioSupportPipeline:
 
 
 async def create_pipeline(
-    stt_config: Dict[str, Any],
-    llm_config: Dict[str, Any],
-    tts_config: Dict[str, Any],
+    stt_config: dict[str, Any],
+    llm_config: dict[str, Any],
+    tts_config: dict[str, Any],
 ) -> AudioSupportPipeline:
     """Create and initialise an :class:`AudioSupportPipeline`."""
     pipeline = AudioSupportPipeline(

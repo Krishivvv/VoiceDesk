@@ -10,7 +10,7 @@ from __future__ import annotations
 import base64
 import os
 from contextlib import asynccontextmanager
-from typing import Any, Dict, Optional
+from typing import Any
 
 from fastapi import FastAPI, File, HTTPException, Path, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -47,7 +47,7 @@ _PLACEHOLDER_KEYS = {
 }
 
 # Shared pipeline instance, created during the lifespan handler.
-pipeline: Optional[AudioSupportPipeline] = None
+pipeline: AudioSupportPipeline | None = None
 
 
 # --------------------------------------------------------------------------- #
@@ -57,14 +57,14 @@ class TextRequest(BaseModel):
     """Request body for text-based queries."""
 
     text: str = Field(..., min_length=1, max_length=MAX_TEXT_LENGTH)
-    parameters: Dict[str, Any] = Field(default_factory=dict)
+    parameters: dict[str, Any] = Field(default_factory=dict)
 
 
 class HealthResponse(BaseModel):
     """Aggregate health/readiness of the pipeline and its components."""
 
     status: str
-    components: Dict[str, bool]
+    components: dict[str, bool]
     message: str
 
 
@@ -95,7 +95,7 @@ class EnhancedAudioResponse(BaseModel):
 # --------------------------------------------------------------------------- #
 # Pipeline configuration helpers
 # --------------------------------------------------------------------------- #
-def _build_llm_config() -> Optional[Dict[str, Any]]:
+def _build_llm_config() -> dict[str, Any] | None:
     """Resolve LLM configuration from the environment.
 
     Prefers Groq (``GROQ_API_KEY``) and falls back to OpenAI
@@ -200,8 +200,8 @@ async def _read_validated_audio(audio: UploadFile) -> bytes:
 # --------------------------------------------------------------------------- #
 # Routes
 # --------------------------------------------------------------------------- #
-@app.get("/", response_model=Dict[str, str])
-async def root() -> Dict[str, str]:
+@app.get("/", response_model=dict[str, str])
+async def root() -> dict[str, str]:
     """Return basic API metadata."""
     return {"message": "Audio Customer Support Agent API", "version": "1.0.0", "docs": "/docs", "health": "/health"}
 
@@ -251,7 +251,7 @@ async def chat_text(request: TextRequest) -> TextResponse:
         )
     except Exception as exc:
         logger.error("Text processing failed: %s", exc)
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.post("/chat/audio", response_model=EnhancedAudioResponse)
@@ -278,7 +278,7 @@ async def chat_audio(audio: UploadFile = File(...)) -> EnhancedAudioResponse:
         raise
     except Exception as exc:
         logger.error("Audio processing failed: %s", exc)
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.get("/chat/audio/{text}")
@@ -298,11 +298,11 @@ async def text_to_audio(text: str = Path(..., min_length=1, max_length=MAX_TEXT_
         raise
     except Exception as exc:
         logger.error("TTS endpoint failed: %s", exc)
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.post("/debug/stt")
-async def debug_stt(audio: UploadFile = File(...)) -> Dict[str, Any]:
+async def debug_stt(audio: UploadFile = File(...)) -> dict[str, Any]:
     """Transcribe an uploaded audio file with the STT component only."""
     active = _require_pipeline()
     try:
@@ -319,7 +319,7 @@ async def debug_stt(audio: UploadFile = File(...)) -> Dict[str, Any]:
         raise
     except Exception as exc:
         logger.error("STT debug failed: %s", exc)
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 if __name__ == "__main__":

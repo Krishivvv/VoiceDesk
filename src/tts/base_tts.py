@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import io
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from src.utils.logging_config import get_logger
 
@@ -20,13 +20,13 @@ _DEFAULT_VOICE = "en-US-AriaNeural"
 class BaseTTS(ABC):
     """Abstract interface every Text-to-Speech implementation must satisfy."""
 
-    def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
+    def __init__(self, config: dict[str, Any] | None = None) -> None:
         """Store configuration and mark the service uninitialised.
 
         Args:
             config: Implementation settings, e.g. ``{"voice": "en-US-AriaNeural"}``.
         """
-        self.config: Dict[str, Any] = config or {}
+        self.config: dict[str, Any] = config or {}
         self.is_initialized: bool = False
 
     @abstractmethod
@@ -57,7 +57,7 @@ class TTSService(BaseTTS):
     voice. Free, no API key, and network-backed (requires connectivity).
     """
 
-    def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
+    def __init__(self, config: dict[str, Any] | None = None) -> None:
         super().__init__(config)
         self.client: Any = None
         self.voice: str = self.config.get("voice", _DEFAULT_VOICE)
@@ -135,7 +135,7 @@ class TTSService(BaseTTS):
         self.is_initialized = False
         logger.info("TTS cleanup completed")
 
-    async def get_available_voices(self) -> List[Dict[str, Any]]:
+    async def get_available_voices(self) -> list[dict[str, Any]]:
         """Return the list of Edge TTS voices available for synthesis."""
         if not self.is_ready():
             raise RuntimeError("TTS service not initialized")

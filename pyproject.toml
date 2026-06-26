@@ -1,0 +1,27 @@
+[project]
+name = "audio-support-agent"
+version = "1.0.0"
+description = "Voice-to-voice customer support agent: Whisper STT -> LangChain ReAct + ChromaDB RAG -> Groq LLaMA -> Edge TTS"
+requires-python = ">=3.10"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = "-q"
+markers = [
+    "integration: tests that require network access or model downloads",
+]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W", "B", "UP"]
+ignore = ["E501", "B008"]  # E501: long lines; B008: FastAPI Depends/File in defaults
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["B011"]

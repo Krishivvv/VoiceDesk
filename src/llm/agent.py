@@ -13,7 +13,7 @@ import hashlib
 import os
 import re
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from langchain_classic.agents import AgentExecutor, create_react_agent
 from langchain_classic.memory import ConversationBufferMemory
@@ -44,14 +44,14 @@ _INJECTION_PATTERNS = [
 class BaseAgent(ABC):
     """Abstract interface for conversational LLM agents."""
 
-    def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
+    def __init__(self, config: dict[str, Any] | None = None) -> None:
         """Store configuration and create the conversation memory buffer.
 
         Args:
             config: Agent settings such as ``api_key``, ``model``,
                 ``temperature`` and ``base_url``.
         """
-        self.config: Dict[str, Any] = config or {}
+        self.config: dict[str, Any] = config or {}
         self.is_initialized: bool = False
         self.memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
 
@@ -76,11 +76,11 @@ class CustomerSupportAgent(BaseAgent):
     wrapped as untrusted reference data before being returned to the LLM.
     """
 
-    def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
+    def __init__(self, config: dict[str, Any] | None = None) -> None:
         super().__init__(config)
         self.llm: Any = None
         self.agent: Any = None
-        self.agent_executor: Optional[AgentExecutor] = None
+        self.agent_executor: AgentExecutor | None = None
         self.chroma_client: Any = None
         self.collection: Any = None
         self.embedding_model: Any = None
@@ -99,7 +99,7 @@ class CustomerSupportAgent(BaseAgent):
             temperature = self.config.get("temperature", 0.7)
             base_url = self.config.get("base_url")
 
-            llm_kwargs: Dict[str, Any] = {"api_key": api_key, "model": model, "temperature": temperature}
+            llm_kwargs: dict[str, Any] = {"api_key": api_key, "model": model, "temperature": temperature}
             if base_url:
                 llm_kwargs["base_url"] = base_url
 
@@ -144,9 +144,9 @@ class CustomerSupportAgent(BaseAgent):
         knowledge_documents = self._get_customer_support_documents()
         self.embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
 
-        documents: List[str] = []
-        metadatas: List[Dict[str, str]] = []
-        ids: List[str] = []
+        documents: list[str] = []
+        metadatas: list[dict[str, str]] = []
+        ids: list[str] = []
         for i, doc_data in enumerate(knowledge_documents):
             doc_id = f"doc_{i}_{hashlib.md5(doc_data['content'].encode()).hexdigest()[:8]}"
             documents.append(doc_data["content"])
@@ -159,7 +159,7 @@ class CustomerSupportAgent(BaseAgent):
         self.collection.add(documents=documents, metadatas=metadatas, ids=ids)
         logger.info("Successfully ingested %d documents into ChromaDB", len(documents))
 
-    def _get_customer_support_documents(self) -> List[Dict[str, str]]:
+    def _get_customer_support_documents(self) -> list[dict[str, str]]:
         """Return the fixed 16-document customer-support knowledge base."""
         return [
             # Return Policy
@@ -251,7 +251,7 @@ class CustomerSupportAgent(BaseAgent):
             },
         ]
 
-    def _create_tools(self) -> List[Tool]:
+    def _create_tools(self) -> list[Tool]:
         """Build the tool set exposed to the ReAct agent."""
         return [
             Tool(
@@ -300,9 +300,9 @@ class CustomerSupportAgent(BaseAgent):
             if not results["documents"] or not results["documents"][0]:
                 return "No relevant information found in the knowledge base for your query."
 
-            formatted: List[str] = []
+            formatted: list[str] = []
             for doc, meta, distance in zip(
-                results["documents"][0], results["metadatas"][0], results["distances"][0]
+                results["documents"][0], results["metadatas"][0], results["distances"][0], strict=False
             ):
                 relevance = round((1 - distance) * 100, 1)
                 safe_doc = self._sanitize_retrieved_text(doc)
@@ -323,7 +323,7 @@ class CustomerSupportAgent(BaseAgent):
             logger.error("Knowledge base search failed: %s", exc)
             return f"Error searching knowledge base: {exc}"
 
-    def _create_agent(self, tools: List[Tool]) -> None:
+    def _create_agent(self, tools: list[Tool]) -> None:
         """Construct the ReAct agent and its executor."""
         prompt_template = """You are a professional and helpful customer support agent. Your job is to assist customers with their queries about orders, returns, shipping, payments, warranties, and account management.
 

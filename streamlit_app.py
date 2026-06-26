@@ -5,17 +5,16 @@ Enhanced with premium dark theme and transcript display.
 Run with: streamlit run streamlit_app.py
 """
 
-import streamlit as st
-import requests
-import json
-import time
-import io
-import wave
-import numpy as np
-from typing import Dict, Any, Optional
 import base64
 import binascii
+import io
+import wave
 from datetime import datetime
+from typing import Any
+
+import numpy as np
+import requests
+import streamlit as st
 
 # Audio recording imports
 try:
@@ -157,7 +156,7 @@ def init_session_state():
             st.session_state[k] = v
 
 
-def check_server_status(server_url: str) -> Dict[str, Any]:
+def check_server_status(server_url: str) -> dict[str, Any]:
     try:
         root = requests.get(f"{server_url}/", timeout=5).json()
         health = requests.get(f"{server_url}/health", timeout=5).json()

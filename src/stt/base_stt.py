@@ -14,7 +14,7 @@ import os
 import tempfile
 import threading
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Optional
+from typing import Any
 
 import numpy as np
 
@@ -27,7 +27,7 @@ _TARGET_SAMPLE_RATE = 16000
 
 # Process-wide model cache so the (potentially large) Whisper weights load
 # exactly once per model name, even across multiple STTService instances.
-_MODEL_CACHE: Dict[str, Any] = {}
+_MODEL_CACHE: dict[str, Any] = {}
 _MODEL_LOCK = threading.Lock()
 
 
@@ -67,13 +67,13 @@ def _load_whisper_model(model_name: str) -> Any:
 class BaseSTT(ABC):
     """Abstract interface every Speech-to-Text implementation must satisfy."""
 
-    def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
+    def __init__(self, config: dict[str, Any] | None = None) -> None:
         """Store configuration and mark the service uninitialised.
 
         Args:
             config: Implementation settings, e.g. ``{"model": "base"}``.
         """
-        self.config: Dict[str, Any] = config or {}
+        self.config: dict[str, Any] = config or {}
         self.is_initialized: bool = False
 
     @abstractmethod
@@ -102,7 +102,7 @@ class STTService(BaseSTT):
     runs in a worker thread so it never blocks the event loop.
     """
 
-    def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
+    def __init__(self, config: dict[str, Any] | None = None) -> None:
         super().__init__(config)
         self.client: Any = None
         self.model_name: str = self.config.get("model", "base")
@@ -178,7 +178,7 @@ class STTService(BaseSTT):
             logger.warning("In-memory decode failed (%s); falling back to temp file", initial_decode_error)
 
         # Strategy 2: write to a temp file and let Whisper/ffmpeg decode it.
-        tmp_path: Optional[str] = None
+        tmp_path: str | None = None
         try:
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False, dir=os.getcwd()) as tmp_file:
                 tmp_file.write(audio_bytes)
