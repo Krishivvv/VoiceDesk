@@ -1,10 +1,9 @@
 """
 LLM Agent with RAG Tool Integration
 
-This module defines the customer support agent that uses a Language Model
+This defines the customer support agent that uses a Language Model
 with Retrieval-Augmented Generation (RAG) capabilities.
 
-Students should implement the RAG tool function and complete the agent setup.
 """
 
 from abc import ABC, abstractmethod
