@@ -1,6 +1,28 @@
+---
+title: VoiceDesk Audio Support Agent
+emoji: 🎧
+colorFrom: indigo
+colorTo: purple
+sdk: docker
+app_port: 8501
+pinned: true
+license: mit
+---
+
 # 🎧 VoiceDesk — AI Audio Customer Support Agent
 
 > **A fully voice-driven customer support pipeline powered by OpenAI Whisper, LangChain ReAct + RAG, and Microsoft Edge TTS — from spoken question to spoken answer in one shot.**
+
+### ▶️ Live demo: **https://huggingface.co/spaces/&lt;your-hf-username&gt;/voicedesk**
+
+*(Hugging Face Space — Docker SDK. Provisioning steps in [DEPLOYMENT.md](DEPLOYMENT.md); the URL above is finalised once the Space is created.)*
+
+<!-- Demo GIF placeholder — replace docs/demo.gif with a screen recording of a full voice round-trip (speak → transcript → spoken answer). -->
+![VoiceDesk voice round-trip demo](docs/demo.gif)
+
+[![CI](https://github.com/Krishivvv/AI-Audio-Support-Agent/actions/workflows/ci.yml/badge.svg)](https://github.com/Krishivvv/AI-Audio-Support-Agent/actions/workflows/ci.yml)
+![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)
+![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)
 
 ---
 
@@ -304,11 +326,40 @@ python src/utils/kb_test.py
 ## Running Tests
 
 ```bash
-# From audio_support_agent/
-pytest tests/ -v
+# From audio_support_agent/  (install dev tooling first)
+pip install -r requirements-dev.txt
 
-# Run integration tests (requires a real API key)
-pytest tests/ -v -m integration
+# Full suite (unit + RAG integration). Integration tests build the local
+# ChromaDB index with sentence-transformers — no API key required.
+pytest
+
+# Unit tests only (skip the RAG/model-download integration tests)
+pytest -m "not integration"
+
+# RAG evaluation report (retrieval hit-rate + answer groundedness)
+python -m tests.test_rag_eval
+```
+
+Lint with `ruff check .`. CI runs ruff + pytest on every push (see
+[.github/workflows/ci.yml](.github/workflows/ci.yml)).
+
+---
+
+## Deployment
+
+VoiceDesk deploys to **Hugging Face Spaces (Docker SDK)** — free CPU is enough
+for Whisper + ChromaDB, and Groq + Edge TTS are free. A `Dockerfile` installs
+ffmpeg and bakes the RAG index at build time, and a GitHub Action
+([.github/workflows/hf-sync.yml](.github/workflows/hf-sync.yml)) mirrors `main`
+to the Space on every push. `GROQ_API_KEY` is stored as a Space secret, never in
+code. Full rationale and step-by-step instructions are in
+[DEPLOYMENT.md](DEPLOYMENT.md).
+
+```bash
+# Build and run the whole stack locally with Docker:
+docker build -t voicedesk .
+docker run -p 8501:8501 -e GROQ_API_KEY=gsk_xxx voicedesk
+# UI on http://localhost:8501
 ```
 
 ---
