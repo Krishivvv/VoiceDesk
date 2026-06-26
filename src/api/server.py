@@ -1,181 +1,214 @@
-"""
-FastAPI Server for Audio Customer Support Agent
+"""FastAPI server exposing the audio customer-support pipeline.
 
-This module provides REST API endpoints for testing the audio support pipeline.
-Students can use this server to test their implementations via HTTP requests.
+Provides REST endpoints for text and audio interactions plus health and
+component-level debug routes. The pipeline is created once during the
+application lifespan and shared across requests.
 """
 
-from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks
-from fastapi.responses import Response
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from typing import Dict, Any, Optional
-import asyncio
+from __future__ import annotations
+
 import base64
-import logging
 import os
+from contextlib import asynccontextmanager
+from typing import Any, Dict, Optional
 
-from src.pipeline import AudioSupportPipeline, create_pipeline, PipelineConfig
+from fastapi import FastAPI, File, HTTPException, Path, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
+from pydantic import BaseModel, Field
+
+from src.pipeline import AudioSupportPipeline, create_pipeline
+from src.utils.logging_config import get_logger
+
+logger = get_logger(__name__)
+
+# ---- Request validation limits ----
+MAX_TEXT_LENGTH = 2000
+MAX_AUDIO_BYTES = 25 * 1024 * 1024  # 25 MB
+ALLOWED_AUDIO_TYPES = {
+    "audio/wav",
+    "audio/x-wav",
+    "audio/wave",
+    "audio/mpeg",
+    "audio/mp3",
+    "audio/ogg",
+    "audio/flac",
+    "audio/x-flac",
+    "application/octet-stream",  # browsers often send this for recorded blobs
+}
+
+# Placeholder API-key values that should be treated as "unset".
+_PLACEHOLDER_KEYS = {
+    "your_llm_api_key_here",
+    "YOUR_REAL_OPENAI_API_KEY_HERE",
+    "REPLACE_WITH_YOUR_OPENAI_API_KEY",
+    "REPLACE_WITH_YOUR_GROQ_API_KEY",
+    "",
+}
+
+# Shared pipeline instance, created during the lifespan handler.
+pipeline: Optional[AudioSupportPipeline] = None
 
 
+# --------------------------------------------------------------------------- #
+# Pydantic models
+# --------------------------------------------------------------------------- #
 class TextRequest(BaseModel):
-    """Request model for text-based queries."""
-    text: str
-    parameters: Optional[Dict[str, Any]] = {}
+    """Request body for text-based queries."""
+
+    text: str = Field(..., min_length=1, max_length=MAX_TEXT_LENGTH)
+    parameters: Dict[str, Any] = Field(default_factory=dict)
 
 
 class HealthResponse(BaseModel):
-    """Response model for health check."""
+    """Aggregate health/readiness of the pipeline and its components."""
+
     status: str
     components: Dict[str, bool]
     message: str
 
 
 class TextResponse(BaseModel):
-    """Response model for text queries."""
+    """Response body for text queries."""
+
     response_text: str
     audio_available: bool
     processing_time_ms: int
 
 
 class TranscriptData(BaseModel):
-    """Transcript data for audio conversations."""
+    """A single user/agent exchange."""
+
     user_input: str
     agent_response: str
 
 
 class EnhancedAudioResponse(BaseModel):
-    """Response model for audio queries with transcript data."""
+    """Response body for audio queries, including transcript and timing."""
+
     success: bool
     audio_response: str
     transcript: TranscriptData
     processing_time_ms: int
 
 
-class EnhancedTextResponse(BaseModel):
-    """Response model for text queries with processing time."""
-    response_text: str
-    processing_time_ms: int
+# --------------------------------------------------------------------------- #
+# Pipeline configuration helpers
+# --------------------------------------------------------------------------- #
+def _build_llm_config() -> Optional[Dict[str, Any]]:
+    """Resolve LLM configuration from the environment.
 
-
-app = FastAPI(
-    title="Audio Customer Support Agent API",
-    description="REST API for testing the STT -> LLM -> TTS pipeline",
-    version="1.0.0",
-    docs_url="/docs",
-    redoc_url="/redoc"
-)
-
-# Add CORS middleware for frontend integration
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # Configure appropriately for production
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# Global pipeline instance
-pipeline: Optional[AudioSupportPipeline] = None
-
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-
-@app.on_event("startup")
-async def startup_event():
+    Prefers Groq (``GROQ_API_KEY``) and falls back to OpenAI
+    (``OPENAI_API_KEY`` / ``LLM_API_KEY``). Returns ``None`` when no usable
+    key is configured.
     """
-    TODO: Initialize the pipeline on server startup.
-    
-    Students should configure the pipeline with their API keys and settings.
-    """
+    groq_key = os.getenv("GROQ_API_KEY")
+    openai_key = os.getenv("OPENAI_API_KEY") or os.getenv("LLM_API_KEY")
+
+    if groq_key and groq_key not in _PLACEHOLDER_KEYS:
+        config = {
+            "api_key": groq_key,
+            "model": os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
+            "base_url": os.getenv("GROQ_BASE_URL", "https://api.groq.com/openai/v1"),
+            "temperature": 0.7,
+        }
+        logger.info("Using Groq LLM provider (model=%s)", config["model"])
+        return config
+
+    if openai_key and openai_key not in _PLACEHOLDER_KEYS:
+        logger.info("Using OpenAI LLM provider (model=gpt-3.5-turbo)")
+        return {"api_key": openai_key, "model": "gpt-3.5-turbo", "temperature": 0.7}
+
+    logger.error("No LLM API key set. Provide GROQ_API_KEY or OPENAI_API_KEY and restart.")
+    return None
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Create the pipeline on startup and tear it down on shutdown."""
     global pipeline
 
-    try:
-        from dotenv import load_dotenv
-        load_dotenv()
+    from dotenv import load_dotenv
 
-        logger.info("Starting Audio Support Agent API server...")
+    load_dotenv()
+    logger.info("Starting Audio Support Agent API server...")
 
-        placeholder_values = [
-            "your_llm_api_key_here",
-            "YOUR_REAL_OPENAI_API_KEY_HERE",
-            "REPLACE_WITH_YOUR_OPENAI_API_KEY",
-            "REPLACE_WITH_YOUR_GROQ_API_KEY",
-            "",
-        ]
-
-        groq_key = os.getenv("GROQ_API_KEY")
-        openai_key = os.getenv("OPENAI_API_KEY") or os.getenv("LLM_API_KEY")
-
-        if groq_key and groq_key not in placeholder_values:
-            llm_config = {
-                "api_key": groq_key,
-                "model": os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
-                "base_url": os.getenv("GROQ_BASE_URL", "https://api.groq.com/openai/v1"),
-                "temperature": 0.7,
-            }
-            logger.info(f"Using Groq LLM provider (model={llm_config['model']})")
-        elif openai_key and openai_key not in placeholder_values:
-            llm_config = {
-                "api_key": openai_key,
-                "model": "gpt-3.5-turbo",
-                "temperature": 0.7,
-            }
-            logger.info("Using OpenAI LLM provider (model=gpt-3.5-turbo)")
-        else:
-            logger.error(
-                "No LLM API key set. Provide GROQ_API_KEY or OPENAI_API_KEY in .env and restart."
+    llm_config = _build_llm_config()
+    if llm_config is not None:
+        try:
+            pipeline = await create_pipeline(
+                stt_config={"model": os.getenv("WHISPER_MODEL", "base")},
+                llm_config=llm_config,
+                tts_config={"voice": os.getenv("TTS_VOICE", "en-US-AriaNeural")},
             )
-            return
+            logger.info("Pipeline initialized and ready to serve requests")
+        except Exception as exc:
+            logger.error("Failed to initialize pipeline: %s", exc)
+            pipeline = None
 
-        stt_config = {
-            "model": "base"
-        }
+    yield
 
-        tts_config = {
-            "voice": "en-US-AriaNeural"
-        }
-
-        pipeline = await create_pipeline(stt_config, llm_config, tts_config)
-        logger.info("Pipeline initialized and ready to serve requests!")
-
-    except Exception as e:
-        logger.error(f"Failed to initialize pipeline: {str(e)}")
-
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Cleanup pipeline resources on server shutdown."""
-    global pipeline
-    
-    if pipeline:
+    if pipeline is not None:
         logger.info("Shutting down pipeline...")
         await pipeline.cleanup()
         pipeline = None
 
 
+app = FastAPI(
+    title="Audio Customer Support Agent API",
+    description="REST API for the STT -> LLM -> TTS voice support pipeline",
+    version="1.0.0",
+    docs_url="/docs",
+    redoc_url="/redoc",
+    lifespan=lifespan,
+)
+
+# CORS — configurable via ALLOWED_ORIGINS (comma-separated); defaults to "*".
+_origins = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", "*").split(",") if o.strip()]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_origins,
+    allow_credentials=_origins != ["*"],
+    allow_methods=["GET", "POST"],
+    allow_headers=["*"],
+)
+
+
+def _require_pipeline() -> AudioSupportPipeline:
+    """Return the initialised pipeline or raise HTTP 503."""
+    if not pipeline or not pipeline.is_initialized:
+        raise HTTPException(status_code=503, detail="Pipeline not initialized. Check /health for details.")
+    return pipeline
+
+
+async def _read_validated_audio(audio: UploadFile) -> bytes:
+    """Read an uploaded audio file, enforcing type and size limits."""
+    if audio.content_type and audio.content_type not in ALLOWED_AUDIO_TYPES:
+        raise HTTPException(status_code=415, detail=f"Unsupported audio type: {audio.content_type}")
+
+    audio_bytes = await audio.read()
+    if len(audio_bytes) == 0:
+        raise HTTPException(status_code=400, detail="Empty audio file received")
+    if len(audio_bytes) > MAX_AUDIO_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Audio file too large ({len(audio_bytes)} bytes; max {MAX_AUDIO_BYTES}).",
+        )
+    return audio_bytes
+
+
+# --------------------------------------------------------------------------- #
+# Routes
+# --------------------------------------------------------------------------- #
 @app.get("/", response_model=Dict[str, str])
-async def root():
-    """Root endpoint with API information."""
-    return {
-        "message": "Audio Customer Support Agent API",
-        "version": "1.0.0",
-        "docs": "/docs",
-        "health": "/health"
-    }
+async def root() -> Dict[str, str]:
+    """Return basic API metadata."""
+    return {"message": "Audio Customer Support Agent API", "version": "1.0.0", "docs": "/docs", "health": "/health"}
 
 
 @app.get("/health", response_model=HealthResponse)
-async def health_check():
-    """
-    Health check endpoint.
-    
-    Returns the status of all pipeline components.
-    """
-    global pipeline
-
+async def health_check() -> HealthResponse:
+    """Report the readiness of the pipeline and its components."""
     if not pipeline:
         return HealthResponse(
             status="unhealthy",
@@ -183,200 +216,119 @@ async def health_check():
                 "pipeline_initialized": False,
                 "stt_ready": False,
                 "llm_ready": False,
-                "tts_ready": False
+                "tts_ready": False,
             },
-            message="Pipeline not initialized. Check OPENAI_API_KEY in .env and restart server."
+            message="Pipeline not initialized. Check GROQ_API_KEY/OPENAI_API_KEY and restart server.",
         )
 
     try:
         components = await pipeline.health_check()
         all_healthy = all(components.values())
-
         return HealthResponse(
             status="healthy" if all_healthy else "degraded",
             components=components,
-            message="All components operational" if all_healthy else "Some components not ready — check server logs"
+            message="All components operational" if all_healthy else "Some components not ready — check logs",
         )
-
-    except Exception as e:
-        logger.error(f"Health check failed: {str(e)}")
-        return HealthResponse(
-            status="error",
-            components={},
-            message=f"Health check error: {str(e)}"
-        )
+    except Exception as exc:
+        logger.error("Health check failed: %s", exc)
+        return HealthResponse(status="error", components={}, message=f"Health check error: {exc}")
 
 
 @app.post("/chat/text", response_model=TextResponse)
-async def chat_text(request: TextRequest):
-    """
-    Process text query through the LLM agent.
-    
-    This endpoint allows testing the LLM component without audio processing.
-    """
-    global pipeline
-
-    if not pipeline or not pipeline.is_initialized:
-        raise HTTPException(
-            status_code=503,
-            detail="Pipeline not initialized. Check /health endpoint for details."
-        )
-
+async def chat_text(request: TextRequest) -> TextResponse:
+    """Answer a text query through the LLM agent (no STT)."""
+    active = _require_pipeline()
     try:
         import time
-        start_time = time.time()
 
-        response_text, response_audio = await pipeline.process_text(
-            request.text,
-            **request.parameters
-        )
-
-        processing_time = int((time.time() - start_time) * 1000)
-
+        start_time = time.perf_counter()
+        response_text, response_audio = await active.process_text(request.text, **request.parameters)
+        processing_time = int((time.perf_counter() - start_time) * 1000)
         return TextResponse(
             response_text=response_text,
             audio_available=len(response_audio) > 0,
-            processing_time_ms=processing_time
+            processing_time_ms=processing_time,
         )
-
-    except Exception as e:
-        logger.error(f"Text processing failed: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as exc:
+        logger.error("Text processing failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 @app.post("/chat/audio", response_model=EnhancedAudioResponse)
-async def chat_audio(audio: UploadFile = File(...)):
-    """
-    TODO: Process audio query through the complete pipeline.
-    
-    This endpoint handles the full STT -> LLM -> TTS pipeline.
-    
-    Args:
-        audio: Audio file upload (WAV, MP3, etc.)
-        
-    Returns:
-        JSON response with base64 audio + transcript + processing time
-    """
-    global pipeline
-
-    if not pipeline or not pipeline.is_initialized:
-        raise HTTPException(
-            status_code=503,
-            detail="Pipeline not initialized. Check /health endpoint for details."
-        )
-
+async def chat_audio(audio: UploadFile = File(...)) -> EnhancedAudioResponse:
+    """Run the full STT -> LLM -> TTS pipeline on an uploaded audio file."""
+    active = _require_pipeline()
     try:
-        audio_bytes = await audio.read()
+        audio_bytes = await _read_validated_audio(audio)
+        logger.info("Processing audio upload: %d bytes (file=%s)", len(audio_bytes), audio.filename)
 
-        if len(audio_bytes) == 0:
-            raise HTTPException(status_code=400, detail="Empty audio file received")
-
-        logger.info(f"Processing audio upload: {len(audio_bytes)} bytes, file: {audio.filename}")
-
-        response_audio, transcript_data, processing_time_ms = await pipeline.process_audio_with_transcript(
+        response_audio, transcript_data, processing_time_ms = await active.process_audio_with_transcript(
             audio_bytes
         )
-
-        encoded_audio = base64.b64encode(response_audio).decode("ascii")
-
         return EnhancedAudioResponse(
             success=True,
-            audio_response=encoded_audio,
+            audio_response=base64.b64encode(response_audio).decode("ascii"),
             transcript=TranscriptData(
                 user_input=transcript_data.user_input,
                 agent_response=transcript_data.agent_response,
             ),
             processing_time_ms=processing_time_ms,
         )
-
     except HTTPException:
         raise
-    except Exception as e:
-        logger.error(f"Audio processing failed: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as exc:
+        logger.error("Audio processing failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 @app.get("/chat/audio/{text}")
-async def text_to_audio(text: str):
-    """
-    TODO: Convert text to audio using TTS.
-    
-    Useful for testing TTS component independently.
-    
-    Args:
-        text: Text to convert to speech
-        
-    Returns:
-        Audio file as bytes
-    """
-    global pipeline
-
-    if not pipeline or not pipeline.is_initialized:
-        raise HTTPException(status_code=503, detail="Pipeline not initialized")
-
+async def text_to_audio(text: str = Path(..., min_length=1, max_length=MAX_TEXT_LENGTH)) -> Response:
+    """Synthesise ``text`` to speech via the TTS component."""
+    active = _require_pipeline()
     try:
-        if not pipeline.tts:
+        if not active.tts:
             raise HTTPException(status_code=503, detail="TTS component not available")
-
-        audio_bytes = await pipeline.tts.synthesize(text)
-
+        audio_bytes = await active.tts.synthesize(text)
         return Response(
             content=audio_bytes,
             media_type="audio/mpeg",
-            headers={"Content-Disposition": "attachment; filename=tts_output.mp3"}
+            headers={"Content-Disposition": "attachment; filename=tts_output.mp3"},
         )
-
     except HTTPException:
         raise
-    except Exception as e:
-        logger.error(f"TTS endpoint failed: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as exc:
+        logger.error("TTS endpoint failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 @app.post("/debug/stt")
-async def debug_stt(audio: UploadFile = File(...)):
-    """
-    TODO: Debug endpoint for testing STT component independently.
-    
-    Args:
-        audio: Audio file to transcribe
-        
-    Returns:
-        Transcription result
-    """
-    global pipeline
-
-    if not pipeline or not pipeline.is_initialized:
-        raise HTTPException(status_code=503, detail="Pipeline not initialized")
-
+async def debug_stt(audio: UploadFile = File(...)) -> Dict[str, Any]:
+    """Transcribe an uploaded audio file with the STT component only."""
+    active = _require_pipeline()
     try:
-        audio_bytes = await audio.read()
-
-        if not pipeline.stt:
+        audio_bytes = await _read_validated_audio(audio)
+        if not active.stt:
             raise HTTPException(status_code=503, detail="STT component not available")
-
-        transcription = await pipeline.stt.transcribe(audio_bytes)
+        transcription = await active.stt.transcribe(audio_bytes)
         return {
             "transcription": transcription,
             "length_chars": len(transcription),
-            "empty": len(transcription.strip()) == 0
+            "empty": len(transcription.strip()) == 0,
         }
-
     except HTTPException:
         raise
-    except Exception as e:
-        logger.error(f"STT debug failed: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as exc:
+        logger.error("STT debug failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 if __name__ == "__main__":
     import uvicorn
-    
-    # TODO: Students can modify these settings for development
+
     uvicorn.run(
         "src.api.server:app",
-        host="0.0.0.0",
-        port=8000,
-        reload=True,  # Enable auto-reload for development
-        log_level="info"
+        host=os.getenv("SERVER_HOST", "0.0.0.0"),
+        port=int(os.getenv("SERVER_PORT", "8000")),
+        reload=os.getenv("DEBUG", "false").lower() == "true",
+        log_level=os.getenv("LOG_LEVEL", "info").lower(),
     )
