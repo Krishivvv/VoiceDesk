@@ -20,7 +20,7 @@ license: mit
 <!-- Demo GIF placeholder — replace docs/demo.gif with a screen recording of a full voice round-trip (speak → transcript → spoken answer). -->
 ![VoiceDesk voice round-trip demo](docs/demo.gif)
 
-[![CI](https://github.com/Krishivvv/AI-Audio-Support-Agent/actions/workflows/ci.yml/badge.svg)](https://github.com/Krishivvv/AI-Audio-Support-Agent/actions/workflows/ci.yml)
+[![CI](https://github.com/Krishivvv/VoiceDesk/actions/workflows/ci.yml/badge.svg)](https://github.com/Krishivvv/VoiceDesk/actions/workflows/ci.yml)
 ![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)
 ![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)
 
