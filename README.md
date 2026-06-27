@@ -77,7 +77,7 @@ You speak. VoiceDesk transcribes your voice with Whisper, routes the query throu
 ## Project Structure
 
 ```
-audio_support_agent/
+VoiceDesk/                       # repo root
 ├── src/
 │   ├── pipeline.py              # AudioSupportPipeline — STT → LLM → TTS orchestrator
 │   ├── stt/
@@ -118,8 +118,8 @@ audio_support_agent/
 ### 1. Clone & create virtual environment
 
 ```bash
-git clone https://github.com/your-username/voicedesk.git
-cd voicedesk/audio_support_agent
+git clone https://github.com/Krishivvv/VoiceDesk.git
+cd VoiceDesk
 
 python -m venv .venv
 
@@ -163,7 +163,7 @@ STT (Whisper) and TTS (Edge TTS) are fully local/free — no additional keys nee
 
 ### 4. Run
 
-Open **two terminals** from inside `audio_support_agent/`:
+Open **two terminals** from the repo root:
 
 **Terminal 1 — API server:**
 ```bash
@@ -326,7 +326,7 @@ python src/utils/kb_test.py
 ## Running Tests
 
 ```bash
-# From audio_support_agent/  (install dev tooling first)
+# From the repo root  (install dev tooling first)
 pip install -r requirements-dev.txt
 
 # Full suite (unit + RAG integration). Integration tests build the local

@@ -96,8 +96,8 @@ preserving the API/UI split used in local development.
 3. In the **GitHub repo** settings, add:
    - Secret `HF_TOKEN` (a Hugging Face *write* token).
    - Variables `HF_USERNAME` and `HF_SPACE` (`voicedesk`).
-4. Push to `main` → the `hf-sync` Action splits the `audio_support_agent/`
-   subtree and force-pushes it to the Space, which builds the Docker image.
+4. Push to `main` → the `hf-sync` Action force-pushes the repo to the Space,
+   which builds the Docker image.
 5. Wait for the Space build to go green, then open the public URL.
 6. Put that URL at the top of `README.md` (replacing the placeholder).
 

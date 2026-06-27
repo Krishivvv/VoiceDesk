@@ -417,7 +417,6 @@ def main():
         st.markdown("""
         **Start the server:**
         ```bash
-        cd audio_support_agent
         python -m src.api.server
         ```
 

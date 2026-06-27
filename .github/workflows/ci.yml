@@ -10,9 +10,6 @@ jobs:
   lint:
     name: Ruff lint
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: audio_support_agent
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -24,9 +21,6 @@ jobs:
   test:
     name: Pytest
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: audio_support_agent
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -34,8 +28,8 @@ jobs:
           python-version: "3.11"
           cache: pip
 
-      - name: Install system deps (ffmpeg)
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Install system deps (ffmpeg + portaudio)
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg libportaudio2
 
       - name: Install CPU PyTorch
         run: pip install torch==2.11.0 --index-url https://download.pytorch.org/whl/cpu
