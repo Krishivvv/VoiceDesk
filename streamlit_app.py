@@ -17,11 +17,15 @@ import numpy as np
 import requests
 import streamlit as st
 
-# Audio recording imports
+# Optional mic recording. sounddevice loads the native PortAudio library at
+# import time, which raises OSError on headless hosts (e.g. Hugging Face Spaces)
+# where no audio device/library exists. Treat that as "recording unavailable"
+# and fall back to file upload — never crash the UI over it.
 try:
     import sounddevice as sd
     AUDIO_RECORDING_AVAILABLE = True
-except ImportError:
+except (ImportError, OSError):
+    sd = None
     AUDIO_RECORDING_AVAILABLE = False
 
 # Configuration
