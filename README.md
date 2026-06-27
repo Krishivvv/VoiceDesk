@@ -13,9 +13,9 @@ license: mit
 
 > **A fully voice-driven customer support pipeline powered by OpenAI Whisper, LangChain ReAct + RAG, and Microsoft Edge TTS — from spoken question to spoken answer in one shot.**
 
-### ▶️ Live demo: **https://huggingface.co/spaces/&lt;your-hf-username&gt;/voicedesk**
+### ▶️ Live demo: **https://huggingface.co/spaces/krishivvv/voicedesk**
 
-*(Hugging Face Space — Docker SDK. Provisioning steps in [DEPLOYMENT.md](DEPLOYMENT.md); the URL above is finalised once the Space is created.)*
+*(Hugging Face Space — Docker SDK. Deployment details in [DEPLOYMENT.md](DEPLOYMENT.md).)*
 
 <!-- Demo GIF placeholder — replace docs/demo.gif with a screen recording of a full voice round-trip (speak → transcript → spoken answer). -->
 ![VoiceDesk voice round-trip demo](docs/demo.gif)
